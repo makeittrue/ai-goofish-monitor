@@ -26,6 +26,7 @@ from src.config import (
     RUN_HEADLESS,
     RUNNING_IN_DOCKER,
     STATE_FILE,
+    USE_WEBKIT,
 )
 from src.parsers import (
     _parse_search_results_json,
@@ -373,27 +374,32 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             print(f"警告：读取登录状态文件失败，将直接按路径使用: {e}")
 
         async with async_playwright() as p:
-            # 反检测启动参数
-            launch_args = [
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-web-security',
-                '--disable-features=IsolateOrigins,site-per-process'
-            ]
-
-            launch_kwargs = {"headless": RUN_HEADLESS, "args": launch_args}
-            if proxy_server:
-                launch_kwargs["proxy"] = {"server": proxy_server}
-
-            if LOGIN_IS_EDGE:
-                launch_kwargs["channel"] = "msedge"
+            if USE_WEBKIT:
+                # 使用 Safari 引擎 (WebKit)，避免 Chrome 安全浏览屏蔽闲鱼等页面
+                log_time("使用 Safari 引擎 (WebKit) 启动浏览器...")
+                webkit_kwargs = {"headless": RUN_HEADLESS}
+                if proxy_server:
+                    webkit_kwargs["proxy"] = {"server": proxy_server}
+                browser = await p.webkit.launch(**webkit_kwargs)
             else:
-                if not RUNNING_IN_DOCKER:
-                    launch_kwargs["channel"] = "chrome"
-
-            browser = await p.chromium.launch(**launch_kwargs)
+                # Chromium / Chrome / Edge
+                launch_args = [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process'
+                ]
+                launch_kwargs = {"headless": RUN_HEADLESS, "args": launch_args}
+                if proxy_server:
+                    launch_kwargs["proxy"] = {"server": proxy_server}
+                if LOGIN_IS_EDGE:
+                    launch_kwargs["channel"] = "msedge"
+                else:
+                    if not RUNNING_IN_DOCKER:
+                        launch_kwargs["channel"] = "chrome"
+                browser = await p.chromium.launch(**launch_kwargs)
 
             context_kwargs = _default_context_options()
             storage_state_arg = state_file
@@ -451,8 +457,12 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 await random_sleep(1, 2)
 
                 log_time("步骤 1 - 导航到搜索结果页...")
-                # 使用 'q' 参数构建正确的搜索URL，并进行URL编码
-                params = {'q': keyword}
+                # 使用与闲鱼前端一致的参数构建搜索 URL，避免短链重定向（减少被浏览器/风控误判）
+                # spm 为搜索建议来源标识，与真实从搜索框跳转的 URL 一致
+                params = {
+                    'spm': 'a21ybx.search.searchSuggest.2.13d25059woPDAB',
+                    'q': keyword,
+                }
                 search_url = f"https://www.goofish.com/search?{urlencode(params)}"
                 log_time(f"目标URL: {search_url}")
 
@@ -469,42 +479,79 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 log_time("[反爬] 模拟用户查看页面...")
                 await random_sleep(1, 3)
 
-                # --- 新增：检查是否存在验证弹窗 ---
+                # --- 检查是否存在验证弹窗 ---
                 baxia_dialog = page.locator("div.baxia-dialog-mask")
                 middleware_widget = page.locator("div.J_MIDDLEWARE_FRAME_WIDGET")
+                
+                # 增加检测超时时间，避免误报
+                detection_timeout = 3000  # 3秒
+                
                 try:
-                    # 等待弹窗在2秒内出现。如果出现，则执行块内代码。
-                    await baxia_dialog.wait_for(state='visible', timeout=2000)
+                    # 等待弹窗出现
+                    await baxia_dialog.wait_for(state='visible', timeout=detection_timeout)
                     print("\n==================== CRITICAL BLOCK DETECTED ====================")
                     print("检测到闲鱼反爬虫验证弹窗 (baxia-dialog)，无法继续操作。")
                     print("这通常是因为操作过于频繁或被识别为机器人。")
-                    print("建议：")
-                    print("1. 停止脚本一段时间再试。")
-                    print("2. (推荐) 在 .env 文件中设置 RUN_HEADLESS=false，以非无头模式运行，这有助于绕过检测。")
-                    print(f"任务 '{keyword}' 将在此处中止。")
-                    print("===================================================================")
-                    raise RiskControlError("baxia-dialog")
+                    print("\n处理建议：")
+                    print("1. 如果浏览器窗口可见，请手动完成验证后继续。")
+                    print("2. 更新登录状态文件，确保登录状态有效。")
+                    print("3. 降低任务执行频率，避免被识别为机器人。")
+                    print("4. 在 .env 文件中设置 RUN_HEADLESS=false，以非无头模式运行。")
+                    
+                    # 非无头模式下，等待用户手动处理验证（最多等待5分钟）
+                    if not RUN_HEADLESS:
+                        print("\n等待您手动完成验证（最多等待5分钟）...")
+                        print("完成后验证弹窗会自动消失，程序将继续执行。")
+                        try:
+                            # 等待弹窗消失，最多等待5分钟
+                            await baxia_dialog.wait_for(state='hidden', timeout=300000)
+                            print("检测到验证弹窗已消失，继续执行任务...")
+                            await random_sleep(2, 4)  # 额外等待，确保页面稳定
+                        except PlaywrightTimeoutError:
+                            print("等待超时：验证弹窗在5分钟内未消失。")
+                            print(f"任务 '{keyword}' 将在此处中止。")
+                            raise RiskControlError("baxia-dialog")
+                    else:
+                        print(f"\n任务 '{keyword}' 将在此处中止。")
+                        print("提示：在无头模式下无法手动处理验证，建议设置 RUN_HEADLESS=false")
+                        raise RiskControlError("baxia-dialog")
                 except PlaywrightTimeoutError:
-                    # 2秒内弹窗未出现，这是正常情况，继续执行
+                    # 弹窗未出现，这是正常情况，继续执行
                     pass
 
                 # 检查是否有J_MIDDLEWARE_FRAME_WIDGET覆盖层
                 try:
-                    await middleware_widget.wait_for(state='visible', timeout=2000)
+                    await middleware_widget.wait_for(state='visible', timeout=detection_timeout)
                     print("\n==================== CRITICAL BLOCK DETECTED ====================")
                     print("检测到闲鱼反爬虫验证弹窗 (J_MIDDLEWARE_FRAME_WIDGET)，无法继续操作。")
                     print("这通常是因为操作过于频繁或被识别为机器人。")
-                    print("建议：")
-                    print("1. 停止脚本一段时间再试。")
-                    print("2. (推荐) 更新登录状态文件，确保登录状态有效。")
+                    print("\n处理建议：")
+                    print("1. 如果浏览器窗口可见，请手动完成验证后继续。")
+                    print("2. 更新登录状态文件，确保登录状态有效。")
                     print("3. 降低任务执行频率，避免被识别为机器人。")
-                    print(f"任务 '{keyword}' 将在此处中止。")
-                    print("===================================================================")
-                    raise RiskControlError("J_MIDDLEWARE_FRAME_WIDGET")
+                    print("4. 在 .env 文件中设置 RUN_HEADLESS=false，以非无头模式运行。")
+                    
+                    # 非无头模式下，等待用户手动处理验证（最多等待5分钟）
+                    if not RUN_HEADLESS:
+                        print("\n等待您手动完成验证（最多等待5分钟）...")
+                        print("完成后验证弹窗会自动消失，程序将继续执行。")
+                        try:
+                            # 等待弹窗消失，最多等待5分钟
+                            await middleware_widget.wait_for(state='hidden', timeout=300000)
+                            print("检测到验证弹窗已消失，继续执行任务...")
+                            await random_sleep(2, 4)  # 额外等待，确保页面稳定
+                        except PlaywrightTimeoutError:
+                            print("等待超时：验证弹窗在5分钟内未消失。")
+                            print(f"任务 '{keyword}' 将在此处中止。")
+                            raise RiskControlError("J_MIDDLEWARE_FRAME_WIDGET")
+                    else:
+                        print(f"\n任务 '{keyword}' 将在此处中止。")
+                        print("提示：在无头模式下无法手动处理验证，建议设置 RUN_HEADLESS=false")
+                        raise RiskControlError("J_MIDDLEWARE_FRAME_WIDGET")
                 except PlaywrightTimeoutError:
-                    # 2秒内弹窗未出现，这是正常情况，继续执行
+                    # 弹窗未出现，这是正常情况，继续执行
                     pass
-                # --- 结束新增 ---
+                # --- 结束检查 ---
 
                 try:
                     await page.click("div[class*='closeIconBg']", timeout=3000)
@@ -667,6 +714,9 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         break
 
                     total_items_on_page = len(basic_items)
+                    # 保存当前列表页 URL，点击进入详情后需返回此页
+                    current_list_url = page.url
+
                     for i, item_data in enumerate(basic_items, 1):
                         if debug_limit > 0 and processed_item_count >= debug_limit:
                             log_time(f"已达到调试上限 ({debug_limit})，停止获取新商品。")
@@ -679,16 +729,51 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             continue
 
                         log_time(f"[页内进度 {i}/{total_items_on_page}] 发现新商品，获取详情: {item_data['商品标题'][:30]}...")
-                        # --- 修改: 访问详情页前的等待时间，模拟用户在列表页上看了一会儿 ---
-                        await random_sleep(2, 4) # 原来是 (2, 4)
+                        await random_sleep(2, 4)
 
-                        detail_page = await context.new_page()
+                        # 严格模拟人为操作：在列表页点击商品进入详情，避免直接 goto 详情 URL 被 Chrome 屏蔽
+                        use_click_approach = True
+                        detail_response = None
+
+                        if use_click_approach:
+                            item_id = item_data.get("商品ID", "")
+                            item_link = page.locator(f'a[href*="id={item_id}"]').first
+                            if not await item_link.count():
+                                # 备选：按顺序点击当前页第 i 个商品卡内的链接（部分页面结构无直接 a[href*="id=xxx"]）
+                                card_links = page.locator('a[href*="item"], a[href*="id="]')
+                                if await card_links.count() >= i:
+                                    item_link = card_links.nth(i - 1)
+                            try:
+                                if await item_link.count():
+                                    await item_link.scroll_into_view_if_needed(timeout=5000)
+                                    await random_sleep(0.5, 1)
+                                    async with page.expect_response(lambda r: DETAIL_API_URL_PATTERN in r.url, timeout=25000) as detail_info:
+                                        await item_link.click()
+                                    detail_response = await detail_info.value
+                                else:
+                                    use_click_approach = False
+                            except PlaywrightTimeoutError:
+                                log_time("   列表页点击进入详情超时，尝试直接打开详情链接...")
+                                use_click_approach = False
+                            except Exception as e:
+                                log_time(f"   列表页点击异常: {e}，尝试直接打开详情链接...")
+                                use_click_approach = False
+
+                        if not use_click_approach or detail_response is None:
+                            detail_page = await context.new_page()
+                            try:
+                                async with detail_page.expect_response(lambda r: DETAIL_API_URL_PATTERN in r.url, timeout=25000) as detail_info:
+                                    await detail_page.goto(item_data["商品链接"], wait_until="domcontentloaded", timeout=25000)
+                                detail_response = await detail_info.value
+                            except Exception:
+                                await detail_page.close()
+                                raise
+                            detail_page_to_close = detail_page
+                        else:
+                            detail_page_to_close = None
+
                         try:
-                            async with detail_page.expect_response(lambda r: DETAIL_API_URL_PATTERN in r.url, timeout=25000) as detail_info:
-                                await detail_page.goto(item_data["商品链接"], wait_until="domcontentloaded", timeout=25000)
-
-                            detail_response = await detail_info.value
-                            if detail_response.ok:
+                            if detail_response and detail_response.ok:
                                 detail_json = await detail_response.json()
 
                                 ret_string = str(await safe_get(detail_json, 'ret', default=[]))
@@ -835,9 +920,16 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         except Exception as e:
                             print(f"   错误: 处理商品详情时发生未知错误: {e}")
                         finally:
-                            await detail_page.close()
-                            # --- 修改: 增加关闭页面后的短暂整理时间 ---
-                            await random_sleep(2, 4) # 原来是 (1, 2.5)
+                            if detail_page_to_close:
+                                await detail_page_to_close.close()
+                            else:
+                                # 通过点击进入的详情：返回列表页，严格模拟人为操作
+                                try:
+                                    await page.goto(current_list_url, wait_until="domcontentloaded", timeout=15000)
+                                    await random_sleep(1, 2)
+                                except Exception as e:
+                                    log_time(f"   返回列表页时出错: {e}")
+                            await random_sleep(2, 4)
 
                     # --- 新增: 在处理完一页所有商品后，翻页前，增加一个更长的“休息”时间 ---
                     if not stop_scraping and page_num < max_pages:
@@ -903,14 +995,30 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             break
         except RiskControlError as e:
             last_error = str(e)
-            print(f"检测到风控或验证触发: {e}")
+            print(f"\n检测到风控或验证触发: {e}")
             if attempt < attempt_limit:
-                print("将尝试轮换账号/IP 后重试...")
+                # 增加重试等待时间，避免频繁触发风控
+                wait_time = min(30 + attempt * 10, 120)  # 30秒起步，每次增加10秒，最多120秒
+                print(f"将在 {wait_time} 秒后尝试轮换账号/IP 后重试...")
+                print("建议：如果频繁遇到此问题，请考虑：")
+                print("  1. 增加任务执行间隔时间")
+                print("  2. 更新登录状态文件")
+                print("  3. 使用代理池分散请求")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"\n所有重试尝试均失败（共 {attempt_limit} 次）。")
+                print("建议：")
+                print("  1. 等待更长时间后重新运行任务")
+                print("  2. 更新所有账号的登录状态文件")
+                print("  3. 检查代理配置是否正常")
+                print("  4. 降低任务执行频率")
         except Exception as e:
             last_error = f"{type(e).__name__}: {e}"
-            print(f"本次尝试失败: {last_error}")
+            print(f"\n本次尝试失败: {last_error}")
             if attempt < attempt_limit:
-                print("将尝试轮换账号/IP 后重试...")
+                wait_time = min(10 + attempt * 5, 60)  # 10秒起步，每次增加5秒，最多60秒
+                print(f"将在 {wait_time} 秒后尝试轮换账号/IP 后重试...")
+                await asyncio.sleep(wait_time)
 
     # 清理任务图片目录
     cleanup_task_images(task_config.get('task_name', 'default'))

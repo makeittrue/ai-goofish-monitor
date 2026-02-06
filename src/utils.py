@@ -100,11 +100,28 @@ def resolve_task_log_path(task_id: int, task_name: str) -> str:
     return primary_path
 
 
+# 商品详情页与闲鱼前端一致的 spm（搜索结果列表点击进入）
+GOOFISH_ITEM_SPM = "a21ybx.search.searchFeedList.1.7f38383ftexEPh"
+
+
+def build_goofish_item_url(item_id: str, category_id: str = None) -> str:
+    """
+    构建与闲鱼前端一致的商品详情页 URL，避免短链重定向。
+    格式: https://www.goofish.com/item?spm=...&id=xxx&categoryId=xxx
+    """
+    if not item_id or item_id == "未知ID":
+        return ""
+    params = [f"spm={GOOFISH_ITEM_SPM}", f"id={item_id}"]
+    if category_id:
+        params.append(f"categoryId={category_id}")
+    return "https://www.goofish.com/item?" + "&".join(params)
+
+
 def convert_goofish_link(url: str) -> str:
     """
     将Goofish商品链接转换为只包含商品ID的手机端格式。
     """
-    match_first_link = re.search(r'item\?id=(\d+)', url)
+    match_first_link = re.search(r'item\?.*?id=(\d+)', url)
     if match_first_link:
         item_id = match_first_link.group(1)
         bfp_json = f'{{"id":{item_id}}}'
@@ -113,7 +130,12 @@ def convert_goofish_link(url: str) -> str:
 
 
 def get_link_unique_key(link: str) -> str:
-    """截取链接中第一个"&"之前的内容作为唯一标识依据。"""
+    """以商品 ID 为唯一标识：从链接中提取 id 参数，若无则退回截取首段。"""
+    if not link:
+        return link
+    match = re.search(r'[?&]id=(\d+)', link)
+    if match:
+        return f"https://www.goofish.com/item?id={match.group(1)}"
     return link.split('&', 1)[0]
 
 

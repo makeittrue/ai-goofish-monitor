@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from src.config import AI_DEBUG_MODE
-from src.utils import safe_get
+from src.utils import safe_get, build_goofish_item_url
 
 
 async def _parse_search_results_json(json_data: dict, source: str) -> list:
@@ -32,9 +32,13 @@ async def _parse_search_results_json(json_data: dict, source: str) -> list:
             image_url = await safe_get(main_data, "picUrl", default="")
             pub_time_ts = click_params.get("publishTime", "")
             item_id = await safe_get(main_data, "itemId", default="未知ID")
+            category_id = click_params.get("categoryId") or main_data.get("categoryId")
+            category_id = str(category_id) if category_id is not None else None
             original_price = await safe_get(main_data, "oriPrice", default="暂无")
             wants_count = await safe_get(click_params, "wantNum", default='NaN')
 
+            # 使用与闲鱼前端一致的商品详情 URL（spm + id + categoryId），避免短链重定向
+            item_url = build_goofish_item_url(item_id, category_id) if item_id and item_id != "未知ID" else raw_link.replace("fleamarket://", "https://www.goofish.com/")
 
             tags = []
             if await safe_get(click_params, "tag") == "freeship":
@@ -53,7 +57,7 @@ async def _parse_search_results_json(json_data: dict, source: str) -> list:
                 "商品标签": tags,
                 "发货地区": area,
                 "卖家昵称": seller,
-                "商品链接": raw_link.replace("fleamarket://", "https://www.goofish.com/"),
+                "商品链接": item_url,
                 "发布时间": datetime.fromtimestamp(int(pub_time_ts)/1000).strftime("%Y-%m-%d %H:%M") if pub_time_ts.isdigit() else "未知时间",
                 "商品ID": item_id
             })

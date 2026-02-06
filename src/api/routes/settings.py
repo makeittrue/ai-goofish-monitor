@@ -177,6 +177,7 @@ async def get_system_status(
         "ai_configured": ai_settings.is_configured(),
         "notification_configured": notification_settings.has_any_notification_enabled(),
         "headless_mode": scraper_settings.run_headless,
+        "use_webkit": scraper_settings.use_webkit,
         "running_in_docker": scraper_settings.running_in_docker,
         "scraper_running": len(running_task_ids) > 0,
         "running_task_ids": running_task_ids,

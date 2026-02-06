@@ -41,6 +41,7 @@ WEBHOOK_BODY = os.getenv("WEBHOOK_BODY")
 PCURL_TO_MOBILE = os.getenv("PCURL_TO_MOBILE", "false").lower() == "true"
 RUN_HEADLESS = os.getenv("RUN_HEADLESS", "true").lower() != "false"
 LOGIN_IS_EDGE = os.getenv("LOGIN_IS_EDGE", "false").lower() == "true"
+USE_WEBKIT = os.getenv("USE_WEBKIT", "false").lower() == "true"  # True=使用 Safari 引擎(WebKit)，避免 Chrome 屏蔽
 RUNNING_IN_DOCKER = os.getenv("RUNNING_IN_DOCKER", "false").lower() == "true"
 AI_DEBUG_MODE = os.getenv("AI_DEBUG_MODE", "false").lower() == "true"
 SKIP_AI_ANALYSIS = os.getenv("SKIP_AI_ANALYSIS", "false").lower() == "true"

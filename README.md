@@ -49,13 +49,20 @@ cp .env.example .env
 
 | 变量 | 说明 | 必填 |
 |------|------|------|
-| `OPENAI_API_KEY` | AI 模型 API Key | 是 |
+| `OPENAI_API_KEY` | AI 模型 API Key（ModelScope 使用时会作为 X-DashScope-Token） | 是 |
 | `OPENAI_BASE_URL` | API 接口地址（兼容 OpenAI 格式） | 是 |
 | `OPENAI_MODEL_NAME` | 多模态模型名称（如 `gpt-4o`） | 是 |
+
+**注意**：如果使用 ModelScope API（`api-inference.modelscope.cn`），请确保：
+- `OPENAI_API_KEY` 设置为有效的 ModelScope/DashScope Token
+- 系统会自动使用 `X-DashScope-Token` header 进行认证
 | `WEB_USERNAME` / `WEB_PASSWORD` | Web 界面登录凭据（默认 `admin` / `admin123`） | 否 |
+| `USE_WEBKIT` | 使用 Safari 引擎 (WebKit) 运行爬虫（设为 `true` 可避免 Chrome 屏蔽闲鱼等页面） | 否 |
 | `NTFY_TOPIC_URL` | ntfy.sh 通知地址 | 否 |
 | `BARK_URL` | Bark 推送地址 | 否 |
 | `WX_BOT_URL` | 企业微信 Webhook（需用双引号包围） | 否 |
+
+**使用 Safari 引擎**：若本地 Chrome 经常屏蔽闲鱼页面，可在 `.env` 中设置 `USE_WEBKIT=true`，爬虫将使用 Playwright 的 WebKit（Safari 引擎）。首次使用需执行：`playwright install webkit`。Docker 镜像默认仅含 Chromium，若在容器内使用 WebKit 需自行在镜像中安装 WebKit。
 
 完整配置项参考 `.env.example`
 
@@ -95,6 +102,17 @@ docker compose up -d
 - **查看日志**: `docker compose logs -f app`
 - **停止服务**: `docker compose down`
 账号状态默认保存在容器内 `/app/state`，如需持久化可在 compose 中添加挂载 `./state:/app/state`。
+
+### Docker 下浏览器模式（无头模式）
+
+容器内没有图形界面，**必须使用无头浏览器**。在 `.env` 中设置：
+
+```bash
+# 无头模式（Docker 下必须为 true，否则浏览器无法启动）
+RUN_HEADLESS=true
+```
+
+不配置时默认即为 `true`。**请勿在 Docker 中设置 `RUN_HEADLESS=false`**，否则爬虫会因无法打开浏览器窗口而失败。
 
 ### 4) 更新镜像
 

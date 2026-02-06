@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "task_name": "微星白龙显示器",
+    "enabled": true,
+    "keyword": "微星白龙显示器",
+    "description": "二手微星白龙显示器",
+    "max_pages": 3,
+    "personal_only": true,
+    "min_price": null,
+    "max_price": null,
+    "cron": null,
+    "ai_prompt_base_file": "prompts/base_prompt.txt",
+    "ai_prompt_criteria_file": "prompts/微星白龙显示器_criteria.txt",
+    "account_state_file": null,
+    "free_shipping": true,
+    "new_publish_option": "",
+    "region": "",
+    "is_running": false
+  },
+  {
+    "task_name": "macbook air ",
+    "enabled": true,
+    "keyword": "macbook air m4 24+512",
+    "description": "搜索macbook air m4 24+512",
+    "max_pages": 3,
+    "personal_only": true,
+    "min_price": null,
+    "max_price": null,
+    "cron": null,
+    "ai_prompt_base_file": "prompts/base_prompt.txt",
+    "ai_prompt_criteria_file": "prompts/macbook_air_24512_criteria.txt",
+    "account_state_file": null,
+    "free_shipping": true,
+    "new_publish_option": "",
+    "region": "",
+    "is_running": false
+  },
+  {
+    "task_name": "全新 大疆pocket3",
+    "enabled": true,
+    "keyword": "全新 大疆pocket3",
+    "description": "全新 大疆pocket3",
+    "max_pages": 3,
+    "personal_only": true,
+    "min_price": null,
+    "max_price": null,
+    "cron": null,
+    "ai_prompt_base_file": "prompts/base_prompt.txt",
+    "ai_prompt_criteria_file": "prompts/全新_大疆pocket3_criteria.txt",
+    "account_state_file": null,
+    "free_shipping": true,
+    "new_publish_option": null,
+    "region": "上海",
+    "is_running": false
+  }
+]

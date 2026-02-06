@@ -99,6 +99,10 @@ docker compose -f docker-compose.dev.yaml up -d --build
     cp .env.example .env
     ```
     编辑 `.env` 文件，至少填入 `OPENAI_API_KEY`。如果您没有特定的模型需求，建议保持 `OPENAI_BASE_URL` 为默认或使用您可靠的代理地址。
+    
+    **ModelScope 用户注意**：如果使用 ModelScope API（`api-inference.modelscope.cn`），请确保：
+    - `OPENAI_API_KEY` 设置为有效的 ModelScope/DashScope Token（可在 [ModelScope 控制台](https://modelscope.cn/my/myaccesstoken) 获取）
+    - 系统会自动使用 `X-DashScope-Token` header 进行认证，无需额外配置
 
 2.  **创建 `config.json` 文件** (任务配置)：
     

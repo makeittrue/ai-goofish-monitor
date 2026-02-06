@@ -38,6 +38,7 @@ export interface SystemStatus {
   ai_configured?: boolean
   notification_configured?: boolean
   headless_mode?: boolean
+  use_webkit?: boolean
   running_in_docker?: boolean
   login_state_file: {
     exists: boolean

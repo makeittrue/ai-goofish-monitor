@@ -85,6 +85,7 @@ class ScraperSettings(_EnvSettings):
     """爬虫相关配置"""
     run_headless: bool = _env_field(True, "RUN_HEADLESS")
     login_is_edge: bool = _env_field(False, "LOGIN_IS_EDGE")
+    use_webkit: bool = _env_field(False, "USE_WEBKIT")  # True=使用 Safari 引擎(WebKit)
     running_in_docker: bool = _env_field(False, "RUNNING_IN_DOCKER")
     state_file: str = _env_field("xianyu_state.json", "STATE_FILE")
 
