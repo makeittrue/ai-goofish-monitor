@@ -1,11 +1,14 @@
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 # --- AI & Notification Configuration ---
-load_dotenv()
+# 固定从项目根目录（含 spider_v2.py、.env 的目录）加载 .env，避免子进程 cwd 不同导致读不到 USE_WEBKIT 等配置
+_project_root = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=_project_root / ".env")
 
 # --- File Paths & Directories ---
 STATE_FILE = "xianyu_state.json"

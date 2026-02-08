@@ -4,7 +4,7 @@ import os
 import random
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 from playwright.async_api import (
     Response,
@@ -23,10 +23,8 @@ from src.config import (
     API_URL_PATTERN,
     DETAIL_API_URL_PATTERN,
     LOGIN_IS_EDGE,
-    RUN_HEADLESS,
     RUNNING_IN_DOCKER,
     STATE_FILE,
-    USE_WEBKIT,
 )
 from src.parsers import (
     _parse_search_results_json,
@@ -374,13 +372,31 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             print(f"警告：读取登录状态文件失败，将直接按路径使用: {e}")
 
         async with async_playwright() as p:
-            if USE_WEBKIT:
+            browser = None
+            # 启动前再次从项目根加载 .env，确保通过 Web UI 启动子进程时能读到 USE_WEBKIT 等配置
+            from pathlib import Path
+            from dotenv import load_dotenv
+            _root = Path(__file__).resolve().parent.parent
+            load_dotenv(dotenv_path=_root / ".env", override=True)
+            use_webkit = os.getenv("USE_WEBKIT", "false").strip().lower() == "true"
+            run_headless = os.getenv("RUN_HEADLESS", "true").strip().lower() != "false"
+            log_time(f"浏览器配置: USE_WEBKIT={use_webkit}, RUN_HEADLESS={run_headless}, LOGIN_IS_EDGE={LOGIN_IS_EDGE}, RUNNING_IN_DOCKER={RUNNING_IN_DOCKER}")
+            
+            if use_webkit:
                 # 使用 Safari 引擎 (WebKit)，避免 Chrome 安全浏览屏蔽闲鱼等页面
                 log_time("使用 Safari 引擎 (WebKit) 启动浏览器...")
-                webkit_kwargs = {"headless": RUN_HEADLESS}
-                if proxy_server:
-                    webkit_kwargs["proxy"] = {"server": proxy_server}
-                browser = await p.webkit.launch(**webkit_kwargs)
+                try:
+                    webkit_kwargs = {"headless": run_headless}
+                    if proxy_server:
+                        webkit_kwargs["proxy"] = {"server": proxy_server}
+                    browser = await p.webkit.launch(**webkit_kwargs)
+                except Exception as e:
+                    error_msg = str(e)
+                    print(f"\n错误：WebKit 浏览器启动失败: {error_msg}")
+                    if "webkit" in error_msg.lower() or "not found" in error_msg.lower():
+                        print("提示：WebKit 未安装。请执行: playwright install webkit")
+                        print("或者将 .env 中的 USE_WEBKIT 设置为 false 使用 Chromium/Chrome")
+                    raise
             else:
                 # Chromium / Chrome / Edge
                 launch_args = [
@@ -391,15 +407,50 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     '--disable-web-security',
                     '--disable-features=IsolateOrigins,site-per-process'
                 ]
-                launch_kwargs = {"headless": RUN_HEADLESS, "args": launch_args}
+                launch_kwargs = {"headless": run_headless, "args": launch_args}
                 if proxy_server:
                     launch_kwargs["proxy"] = {"server": proxy_server}
+                
+                # 确定使用的浏览器类型
+                browser_type = "Chromium (Playwright 自带)"
                 if LOGIN_IS_EDGE:
                     launch_kwargs["channel"] = "msedge"
+                    browser_type = "Microsoft Edge (系统安装)"
+                elif not RUNNING_IN_DOCKER:
+                    # 非 Docker 环境：强制使用系统 Chrome，而不是 Playwright 自带的 Chromium
+                    launch_kwargs["channel"] = "chrome"
+                    browser_type = "Google Chrome (系统安装)"
                 else:
-                    if not RUNNING_IN_DOCKER:
-                        launch_kwargs["channel"] = "chrome"
-                browser = await p.chromium.launch(**launch_kwargs)
+                    browser_type = "Chromium (Playwright 自带，Docker 环境)"
+                
+                log_time(f"启动浏览器: {browser_type}")
+                
+                try:
+                    browser = await p.chromium.launch(**launch_kwargs)
+                    # browser.version 是属性（字符串），不是方法，不能写 version()
+                    v = getattr(browser, "version", None)
+                    log_time(f"浏览器启动成功" + (f"，版本: {v}" if v else ""))
+                except Exception as e:
+                    error_msg = str(e)
+                    print(f"\n错误：浏览器启动失败: {error_msg}")
+                    if "channel" in error_msg.lower() or "chrome" in error_msg.lower() or "msedge" in error_msg.lower():
+                        print(f"提示：未找到指定的浏览器 ({browser_type})")
+                        if LOGIN_IS_EDGE:
+                            print("解决方案：")
+                            print("  1. 安装 Microsoft Edge")
+                            print("  2. 或设置 LOGIN_IS_EDGE=false 使用 Chrome")
+                            print("  3. 或在 .env 中设置 RUNNING_IN_DOCKER=true 使用 Playwright Chromium")
+                        elif not RUNNING_IN_DOCKER:
+                            print("解决方案：")
+                            print("  1. 安装 Google Chrome")
+                            print("  2. 或设置 LOGIN_IS_EDGE=true 使用 Edge")
+                            print("  3. 或在 .env 中设置 RUNNING_IN_DOCKER=true 使用 Playwright Chromium")
+                        else:
+                            print("Docker 环境：镜像应已包含 Chromium，如仍有问题请检查镜像配置")
+                    raise
+            
+            if browser is None:
+                raise RuntimeError("浏览器启动失败：未知错误")
 
             context_kwargs = _default_context_options()
             storage_state_arg = state_file
@@ -457,13 +508,11 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 await random_sleep(1, 2)
 
                 log_time("步骤 1 - 导航到搜索结果页...")
-                # 使用与闲鱼前端一致的参数构建搜索 URL，避免短链重定向（减少被浏览器/风控误判）
-                # spm 为搜索建议来源标识，与真实从搜索框跳转的 URL 一致
-                params = {
-                    'spm': 'a21ybx.search.searchSuggest.2.13d25059woPDAB',
-                    'q': keyword,
-                }
-                search_url = f"https://www.goofish.com/search?{urlencode(params)}"
+                # 使用与闲鱼前端一致的参数构建搜索 URL，严格模拟手动从搜索框输入的行为
+                # spm 为搜索框输入来源标识（a21ybx.search.searchInput.0），与真实手动访问一致
+                # 参数顺序：q 在前，spm 在后；空格使用 %20 编码（quote 而非 quote_plus）
+                spm_value = 'a21ybx.search.searchInput.0'
+                search_url = f"https://www.goofish.com/search?q={quote(keyword)}&spm={spm_value}"
                 log_time(f"目标URL: {search_url}")
 
                 # 使用 expect_response 在导航的同时捕获初始搜索的API数据
@@ -499,7 +548,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     print("4. 在 .env 文件中设置 RUN_HEADLESS=false，以非无头模式运行。")
                     
                     # 非无头模式下，等待用户手动处理验证（最多等待5分钟）
-                    if not RUN_HEADLESS:
+                    if not run_headless:
                         print("\n等待您手动完成验证（最多等待5分钟）...")
                         print("完成后验证弹窗会自动消失，程序将继续执行。")
                         try:
@@ -532,7 +581,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     print("4. 在 .env 文件中设置 RUN_HEADLESS=false，以非无头模式运行。")
                     
                     # 非无头模式下，等待用户手动处理验证（最多等待5分钟）
-                    if not RUN_HEADLESS:
+                    if not run_headless:
                         print("\n等待您手动完成验证（最多等待5分钟）...")
                         print("完成后验证弹窗会自动消失，程序将继续执行。")
                         try:
